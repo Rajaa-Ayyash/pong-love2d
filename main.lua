@@ -8,6 +8,36 @@ local score1, score2 = 0, 0
 local winningScore = 5
 local gameState, winner = "start", ""
 local titleFont, scoreFont, smallFont
+local animationTime = 0
+local flash1, flash2 = 0, 0
+local sounds = {}
+local winSoundStep = 0
+local winSoundTimer = 0
+local winAnimationStart = 0
+
+-- Create a sound
+function createSound(frequency, duration, volume)
+    local sampleRate = 44100
+    local samples = math.floor(sampleRate * duration)
+    local data = love.sound.newSoundData(samples, sampleRate, 16, 1)
+
+    for i = 0, samples - 1 do
+        local t = i / sampleRate
+        local fade = 1 - t / duration
+        local wave = math.sin(2 * math.pi * frequency * t)
+
+        data:setSample(i, wave * volume * fade)
+    end
+
+    return love.audio.newSource(data, "static")
+end
+
+function playSound(name)
+    if sounds[name] then
+        sounds[name]:stop()
+        sounds[name]:play()
+    end
+end
 
 function love.load()
     love.window.setTitle("Neon Pong")
@@ -40,8 +70,18 @@ function love.load()
     titleFont = love.graphics.newFont(36)
     scoreFont = love.graphics.newFont(30)
     smallFont = love.graphics.newFont(16)
+    
+    --sounds
+    sounds.hit = createSound(650, 0.09, 0.20)
+    sounds.wall = createSound(420, 0.07, 0.12)
+    sounds.score = createSound(260, 0.20, 0.20)
 
-    -- Background dots
+    sounds.win1 = createSound(520, 0.15, 0.18)
+    sounds.win2 = createSound(660, 0.15, 0.18)
+    sounds.win3 = createSound(880, 0.35, 0.20)
+
+
+    -- Background
     dots = {}
     ballTrail = {}
 
@@ -80,7 +120,7 @@ function movePaddles(dt)
     player2.y = math.max(0, math.min(player2.y, H - player2.height))
 end
 
--- Check rectangle collision
+-- Check collision
 function checkCollision(a, b)
     return a.x < b.x + b.width
        and a.x + a.width > b.x
@@ -96,7 +136,40 @@ function resetBall()
     ballTrail = {}
 end
 
+  -- Win sound
+function updateWinSound(dt)
+    if winSoundStep == 0 then
+        return
+    end
+
+    winSoundTimer = winSoundTimer - dt
+
+    if winSoundTimer <= 0 then
+        if winSoundStep == 1 then
+            playSound("win1")
+        elseif winSoundStep == 2 then
+            playSound("win2")
+        elseif winSoundStep == 3 then
+            playSound("win3")
+        end
+
+        winSoundStep = winSoundStep + 1
+        winSoundTimer = 0.17
+
+        if winSoundStep > 3 then
+            winSoundStep = 0
+        end
+    end
+end
+
 function love.update(dt)
+    animationTime = animationTime + dt
+    updateWinSound(dt)
+
+    -- Fade paddle glow
+    flash1 = math.max(0, flash1 - dt * 3)
+    flash2 = math.max(0, flash2 - dt * 3)
+
     if gameState ~= "playing" then
         return
     end
@@ -121,42 +194,57 @@ function love.update(dt)
     if ball.y <= 0 then
         ball.y = 0
         ball.dy = -ball.dy
+        playSound("wall")
 
     elseif ball.y + ball.height >= H then
         ball.y = H - ball.height
         ball.dy = -ball.dy
+        playSound("wall")
     end
+
 
     -- Paddle collision
     if ball.dx < 0 and checkCollision(ball, player1) then
         ball.x = player1.x + player1.width
         ball.dx = -ball.dx * speedIncrease
         ball.dy = ball.dy * speedIncrease
+        flash1 = 1
+        playSound("hit")
 
     elseif ball.dx > 0 and checkCollision(ball, player2) then
         ball.x = player2.x - ball.width
         ball.dx = -ball.dx * speedIncrease
         ball.dy = ball.dy * speedIncrease
+        flash2 = 1
+        playSound("hit")
     end
 
-    -- Give a point when someone misses
+    -- Give a point on a miss
     if ball.x + ball.width < 0 then
         score2 = score2 + 1
+        playSound("score")
         resetBall()
 
     elseif ball.x > W then
         score1 = score1 + 1
+        playSound("score")
         resetBall()
     end
-
+    
     -- Check winner
     if score1 >= winningScore then
         winner = "PLAYER 1 WINS!"
         gameState = "gameover"
+        winAnimationStart = animationTime
+        winSoundStep = 1
+        winSoundTimer = 0
 
     elseif score2 >= winningScore then
         winner = "PLAYER 2 WINS!"
         gameState = "gameover"
+        winAnimationStart = animationTime
+        winSoundStep = 1
+        winSoundTimer = 0
     end
 end
 
@@ -175,14 +263,14 @@ function drawBackground()
         love.graphics.rectangle("fill", 0, y, W, 2)
     end
 
-    -- Pink and blue sides
+    -- sides
     love.graphics.setColor(0.45, 0.05, 0.35, 0.12)
     love.graphics.rectangle("fill", 0, 0, W / 2, H)
 
     love.graphics.setColor(0.02, 0.30, 0.65, 0.10)
     love.graphics.rectangle("fill", W / 2, 0, W / 2, H)
 
-    -- Small dots
+    -- dots
     for i, dot in ipairs(dots) do
         if i % 2 == 0 then
             love.graphics.setColor(1, 0.40, 0.85, dot.alpha)
@@ -204,7 +292,7 @@ function drawBackground()
         )
     end
 
-    -- Arena border
+    -- border
     love.graphics.setLineWidth(9)
     love.graphics.setColor(0.9, 0.2, 0.8, 0.12)
     love.graphics.rectangle(
@@ -226,21 +314,23 @@ function drawBackground()
 end
 
 -- Draw glowing paddle
-function drawPaddle(paddle, r, g, b)
-    love.graphics.setColor(r, g, b, 0.10)
+function drawPaddle(paddle, r, g, b, flash)
+    local glow = 0.10 + flash * 0.35
+
+    love.graphics.setColor(r, g, b, glow)
     love.graphics.rectangle(
         "fill",
-        paddle.x - 9, paddle.y - 9,
-        paddle.width + 18, paddle.height + 18,
-        10, 10
+        paddle.x - 12, paddle.y - 12,
+        paddle.width + 24, paddle.height + 24,
+        12, 12
     )
 
-    love.graphics.setColor(r, g, b, 0.25)
+    love.graphics.setColor(r, g, b, 0.25 + flash * 0.35)
     love.graphics.rectangle(
         "fill",
-        paddle.x - 4, paddle.y - 4,
-        paddle.width + 8, paddle.height + 8,
-        7, 7
+        paddle.x - 5, paddle.y - 5,
+        paddle.width + 10, paddle.height + 10,
+        8, 8
     )
 
     love.graphics.setColor(r, g, b)
@@ -259,6 +349,7 @@ function drawPaddle(paddle, r, g, b)
         2, 2
     )
 end
+
 
 -- Draw player scores
 function drawScoreboard()
@@ -304,63 +395,175 @@ function drawScoreboard()
     love.graphics.setColor(1, 1, 1)
 end
 
--- Draw start and winner screens
+-- Draw player controls
+function drawControls()
+    love.graphics.setFont(smallFont)
+
+    -- Player 1
+    love.graphics.setColor(1, 0.35, 0.78, 0.15)
+    love.graphics.rectangle(
+        "fill", 135, 360, 240, 85, 12, 12
+    )
+
+    love.graphics.setColor(1, 0.45, 0.85)
+    love.graphics.rectangle(
+        "line", 135, 360, 240, 85, 12, 12
+    )
+
+    love.graphics.printf(
+        "PLAYER 1", 135, 375, 240, "center"
+    )
+
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf(
+        "W / S", 135, 405, 240, "center"
+    )
+
+    -- Player 2
+    love.graphics.setColor(0.25, 0.85, 1, 0.15)
+    love.graphics.rectangle(
+        "fill", 425, 360, 240, 85, 12, 12
+    )
+
+    love.graphics.setColor(0.45, 0.95, 1)
+    love.graphics.rectangle(
+        "line", 425, 360, 240, 85, 12, 12
+    )
+
+    love.graphics.printf(
+        "PLAYER 2", 425, 375, 240, "center"
+    )
+
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf(
+        "UP / DOWN", 425, 405, 240, "center"
+    )
+end
+
+
+-- Draw start & winner screens
 function drawGameScreen()
-    if gameState == "playing" then
+    if gameState == "playing" or gameState == "paused" then
         return
     end
 
+    
     love.graphics.setColor(0.04, 0.05, 0.14, 0.88)
     love.graphics.rectangle("fill", 0, 0, W, H)
 
     love.graphics.setFont(titleFont)
 
     if gameState == "start" then
-        love.graphics.setColor(1, 0.45, 0.85)
+       
+        love.graphics.setColor(1, 0.25, 0.75, 0.15)
         love.graphics.printf(
-            "NEON PONG", 0, 205, W, "center"
+            "NEON PONG", 2, 173, W, "center"
         )
-    else
-        love.graphics.setColor(0.45, 0.95, 1)
+
+        love.graphics.setColor(1, 0.55, 0.88)
         love.graphics.printf(
-            winner, 0, 205, W, "center"
+            "NEON PONG", 0, 170, W, "center"
+        )
+
+        love.graphics.setColor(0.35, 0.85, 1)
+        love.graphics.rectangle(
+            "fill", 315, 225, 170, 3, 2, 2
+        )
+
+        local alpha = 0.65 + 0.35 *
+            math.sin(animationTime * 3)
+
+        love.graphics.setFont(smallFont)
+        love.graphics.setColor(1, 1, 1, alpha)
+        love.graphics.printf(
+            "PRESS SPACE TO START",
+            0, 285, W, "center"
+        )
+
+        drawControls()
+
+        love.graphics.setColor(0.65, 0.70, 0.90)
+        love.graphics.printf(
+            "FIRST TO 5 POINTS WINS",
+            0, 485, W, "center"
+        )
+
+   
+    
+    else
+
+        local winTime = animationTime - winAnimationStart
+        local offset = math.sin(winTime * 2) * 5
+
+        local r, g, b = 1, 0.45, 0.85
+
+        if score2 >= winningScore then
+            r, g, b = 0.45, 0.95, 1
+        end
+
+        love.graphics.setFont(titleFont)
+        love.graphics.setColor(r, g, b, 0.20)
+        love.graphics.printf(
+            winner, 2, 207 + offset, W, "center"
+        )
+
+        love.graphics.setColor(r, g, b)
+        love.graphics.printf(
+            winner, 0, 205 + offset, W, "center"
+        )
+
+        love.graphics.setFont(smallFont)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.printf(
+            "PRESS SPACE TO PLAY AGAIN",
+            0, 330, W, "center"
         )
     end
 
-    love.graphics.setFont(smallFont)
     love.graphics.setColor(1, 1, 1)
+end
 
-    local prompt = gameState == "start"
-        and "Press SPACE to start"
-        or "Press SPACE to play again"
+-- Draw pause screen
+function drawPauseScreen()
+    if gameState ~= "paused" then
+        return
+    end
 
+    love.graphics.setColor(0.04, 0.05, 0.14, 0.80)
+    love.graphics.rectangle("fill", 0, 0, W, H)
+
+    love.graphics.setFont(titleFont)
+    love.graphics.setColor(1, 0.55, 0.88)
     love.graphics.printf(
-        prompt, 0, 285, W, "center"
+        "PAUSED", 0, 230, W, "center"
     )
 
-    love.graphics.setColor(0.65, 0.70, 0.90)
+    love.graphics.setFont(smallFont)
+    love.graphics.setColor(0.45, 0.95, 1)
     love.graphics.printf(
-        "Player 1: W / S     Player 2: UP / DOWN",
-        0, 345, W, "center"
+        "Press P to resume",
+        0, 300, W, "center"
     )
 
     love.graphics.setColor(1, 1, 1)
 end
 
+
 function love.draw()
     drawBackground()
 
     -- Draw paddles
-    drawPaddle(player1, 1, 0.35, 0.78)
-    drawPaddle(player2, 0.35, 0.90, 1)
+    drawPaddle(player1, 1, 0.35, 0.78, flash1)
+    drawPaddle(player2, 0.35, 0.90, 1, flash2)
+
 
     -- Ball trail
     for i, point in ipairs(ballTrail) do
-        local alpha = (1 - i / 13) * 0.35
-        local radius = math.max(1, 7 - i * 0.45)
+        local fade = 1 - i / (#ballTrail + 1)
+        local radius = 2 + fade * 7
 
         love.graphics.setColor(
-            1, 0.75, 0.40, alpha
+            1, 0.75, 0.40, fade * 0.30
         )
 
         love.graphics.circle(
@@ -384,16 +587,27 @@ function love.draw()
 
     drawScoreboard()
     drawGameScreen()
+    drawPauseScreen()
 
     love.graphics.setColor(1, 1, 1)
 end
+
 
 function love.keypressed(key)
     if key == "f5" then
         love.event.quit("restart")
     end
 
-    -- Start game
+    -- Pause or resume
+    if key == "p" then
+        if gameState == "playing" then
+            gameState = "paused"
+        elseif gameState == "paused" then
+            gameState = "playing"
+        end
+    end
+
+    -- Start
     if key == "space" then
         if gameState == "start" then
             resetBall()
@@ -402,8 +616,13 @@ function love.keypressed(key)
         elseif gameState == "gameover" then
             score1, score2 = 0, 0
             winner = ""
+            winSoundStep = 0
+            winSoundTimer = 0
+            winAnimationStart = 0
             resetBall()
             gameState = "playing"
+
         end
     end
 end
+
