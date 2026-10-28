@@ -1,12 +1,14 @@
 
 local W, H = 800, 600
 local player1, player2, ball
+local speedIncrease = 1.05
 
 function love.load()
     love.window.setTitle("Pong Game")
     love.window.setMode(W, H)
     love.graphics.setBackgroundColor(0.08, 0.08, 0.12)
 
+    -- Players and ball
     player1 = {
         x = 30, y = 250,
         width = 15, height = 100,
@@ -60,7 +62,7 @@ end
 function resetBall()
     ball.x = W / 2 - ball.width / 2
     ball.y = H / 2 - ball.height / 2
-    ball.dx = -ball.dx
+    ball.dx = ball.dx > 0 and -220 or 220
     ball.dy = 160
 end
 
@@ -84,11 +86,13 @@ function love.update(dt)
     -- Paddle collision
     if ball.dx < 0 and checkCollision(ball, player1) then
         ball.x = player1.x + player1.width
-        ball.dx = -ball.dx
+        ball.dx = -ball.dx * speedIncrease
+        ball.dy = ball.dy * speedIncrease
 
     elseif ball.dx > 0 and checkCollision(ball, player2) then
         ball.x = player2.x - ball.width
-        ball.dx = -ball.dx
+        ball.dx = -ball.dx * speedIncrease
+        ball.dy = ball.dy * speedIncrease
     end
 
     -- Reset ball when a player misses
